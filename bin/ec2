@@ -1,8 +1,12 @@
-#!/bin/sh
-source $EC2_SCRIPT_HOME/conf/.ec2-default.props
+#!/bin/bash
+
+SCRIPTPATH=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+
+DEFAULT_REGION=eu-west-1
+DEFAULT_PEM="$HOME/.ssh/id_rsa"
+DEFAULT_USER=ubuntu
 
 # Init variables
-infoOpt="N"
 xOpt=""
 
 # Extract options
@@ -17,9 +21,6 @@ while getopts "u:k:c:ixh" opt; do
     c)
       commandOpt=$OPTARG
       ;;
-    i)
-      infoOpt="Y"
-      ;;
     x)
       xOpt="-X"
       ;;
@@ -27,54 +28,24 @@ while getopts "u:k:c:ixh" opt; do
       echo "\nDisplay and connect easely to your EC2 instance(s)"
       echo "Usage: $0 [-u user] [-x] [-c \"command\"] [eu|us|us-west-1|region]"
       echo "\nArguments:"
-      echo "\t-i display instances' details and exit"
       echo "\t-u user"
       echo "\t-k PEM file"
       echo "\t-x Export display"
       echo "\t-c \"command (sent by ssh)\""
-      echo "\nAll the arguments are optional, set the default properties in ~/.ec2-default.props"
       exit 1
       ;;
     \?)
-      echo "\033[1;32mInvalid option: -$OPTARG\033[0m" >&2
+      echo -e "\033[1;32mInvalid option: -$OPTARG\033[0m" >&2
       ;;
   esac
 done
 shift $(($OPTIND - 1))
-
-# Set default variables
-if [ "$1" = "" ]
-then
-  region=$DEFAULT_REGION
-else
-  region=$1
-fi
 
 if [ "$keyOpt" != "" ]
 then
     key=$keyOpt
 else
     key=$DEFAULT_PEM
-fi
-
-if [ "$1" = "eu" ]
-then
-  if [ "$keyOpt" != "" ]
-  then
-    key=$keyOpt
-  else
-    key=$DEFAULT_EU_PEM
-  fi
-  region=$DEFAULT_EU
-elif [ "$1" = "us" ]
-then
-  if [ "$keyOpt" != "" ]
-  then
-    key=$keyOpt
-  else
-    key=$DEFAULT_US_PEM
-  fi
-  region=$DEFAULT_US
 fi
 
 if [ "$userOpt" != "" ]
@@ -84,18 +55,8 @@ else
   user=$DEFAULT_USER
 fi
 
-# Print region info
-echo "\033[33mRegion: $region\033[0m"
-
-# Print info and quit
-if [ "$infoOpt" = "Y" ]
-then
-  python $EC2_SCRIPT_HOME/bin/ec2-list -k $AWS_ACCESS_KEY_ID -s $AWS_SECRET_ACCESS_KEY --with-header $region
-  exit 1
-fi
-
 # Get hostname
-hosts=`python $EC2_SCRIPT_HOME/bin/ec2-list -k $AWS_ACCESS_KEY_ID -s $AWS_SECRET_ACCESS_KEY $region`
+hosts=`python2 $SCRIPTPATH/ec2-list "$@" $DEFAULT_REGION`
 name="`echo "$hosts" | awk 'BEGIN { FS = " " } ; { print $1 }'`"
 hostname="`echo "$hosts" | awk 'BEGIN { FS = " " } ; { print $2 }'`"
 
@@ -105,29 +66,38 @@ for i in $name
 do
   index=`expr $index + 1`
   address=`echo "$hostname" | head -$index | tail -1`
-  echo "\033[33m$index. \033[32;1m$i\033[0m ($address)"
+  echo -e "\033[33m$index. \033[32;1m$i\033[0m ($address)"
 done
 unset IFS
 
-# Prompt for instance number(s)
-printf "Pick your option(s) (use space to specify more instances, i.e: 1 2 3 4): "
-read range
+if (( "$index" == 0 )); then
+  echo "No matching instances :-("
+  exit 1
+fi
 
-for input in $range
-do
-  index=0
-  for i in $hostname
+if (( "$index" == 1 )); then
+  selectedhost=$address
+  selectedname=$i
+else
+  # Prompt for instance number(s)
+  printf "Pick an instance: "
+  read range
+
+  for input in $range
   do
-    index=`expr $index + 1`
-    if [ "$index" = "$input" ]
-    then
-      selectedhost=`echo $i`
-      selectedname=`echo "$name" | head -$index | tail -1`
-    fi
+    index=0
+    for i in $hostname
+    do
+      index=`expr $index + 1`
+      if [ "$index" = "$input" ]
+      then
+        selectedhost=`echo $i`
+        selectedname=`echo "$name" | head -$index | tail -1`
+      fi
+    done
   done
+fi
 
-  # Run ssh
-  echo "\033[32mConnecting to $selectedname \033[0m"
-  echo "\033[33mssh -i $key $xOpt $user@$selectedhost\033[0m"
-  ssh -o StrictHostKeyChecking=no -i $key $xOpt $user@$selectedhost $commandOpt
-done
+# Run ssh
+echo -e "\033[32mConnecting to $selectedhost \033[0m"
+ssh -o StrictHostKeyChecking=no -i $key $xOpt $user@$selectedhost $commandOpt
